@@ -2,7 +2,7 @@ import ephem
 import math
 import time
 import datetime
-from location_config import Latitude, Longitude, timezone
+from location_config import Latitude, Longitude, timezone, day_offset
 
 def hrmn(time):
     # return 12-hour time with AM/PM suffix (e.g. "01:05PM")
@@ -105,10 +105,13 @@ def merge_windows(windows):
     return merged
 
 timesec = time.time()
-date = datetime.datetime.now(datetime.timezone.utc)
+date = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=day_offset)
 
 # Zodiac labels
-zodiac = ['Rat','Ox','Tiger','Rabbit','Dragon','Snake','Horse','Sheep','Monkey','Bird','Dog','Boar']
+# old_zodiac = ['Rat','Ox','Tiger','Rabbit','Dragon','Snake','Horse','Sheep','Monkey','Bird','Dog','Boar']
+zodiac = ['Walley','Flathead Catfish','Trout','Largemouth Bass',
+          'Northern Pike','Smallmouth Bass','Bluegill','Crappie',
+          'Striper','Muskie','Channel Catfish','Bowfin']
 
 # Get solar segments
 segments = sunlight(Latitude, Longitude, timesec)
@@ -156,8 +159,8 @@ sr_local_dt = frac_day_to_local_dt(sunrise_frac, local_ref_date)
 ss_local_dt = frac_day_to_local_dt(sunset_frac, local_ref_date)
 
 # define major/minor window sizes (hours)
-MAJOR_HOURS = 2.0    # around moon transit/underfoot
-MINOR_HOURS = 1.5    # around moonrise/moonset
+MAJOR_HOURS = 1.0    # around moon transit/underfoot
+MINOR_HOURS = 0.5    # around moonrise/moonset
 
 # convert moon event times to local
 mr_local = to_local(moonrise)
@@ -178,6 +181,8 @@ windows.append(make_window(sund_local, MINOR_HOURS, MINOR_HOURS))     # Sun unde
 windows.append(make_window(sr_local_dt, MAJOR_HOURS, MAJOR_HOURS))       # Sunrise (major)
 windows.append(make_window(ss_local_dt, MAJOR_HOURS, MAJOR_HOURS))       # Sunset (major)
 
+merged = merge_windows(windows)
+
 # Labels for the original windows so we can show which events produced each window
 event_labels = [
     'Moon Overhead (Major)', 'Moon Underfoot (Major)',
@@ -186,8 +191,6 @@ event_labels = [
     'Sunrise (Major)', 'Sunset (Major)'
 ]
 
-merged = merge_windows(windows)
-
 # Display fusion
 print(date, "UTC time")
 
@@ -195,26 +198,38 @@ print("\nIndividual Solunar Windows (local time):")
 for lbl, (st, en) in zip(event_labels, windows):
     print(f"{lbl:15} → {st.strftime('%m/%d/%Y %I:%M%p')} - {en.strftime('%I:%M%p')}")
 
-print("\nZodiac Time Segments:")
-for i, label in enumerate(zodiac):
-    print(f"{label:6} → {times[i]}")
+print("\nZodiac replaced with fish:")
+# If somebody customized `zodiac` make sure we warn about mismatches between
+# the number of zodiac labels and the number of time slots (always 12).
+if len(times) != len(zodiac):
+    print(f"Warning: times length ({len(times)}) != zodiac length ({len(zodiac)}). Using modulo mapping.")
+
+# Print each time and the corresponding zodiac label (wrap labels with modulo
+# in case the user supplied fewer or more labels than time slots).
+if not zodiac:
+    raise ValueError("zodiac list is empty; please provide at least one zodiac label")
+
+for i, t in enumerate(times):
+    lbl = zodiac[i % len(zodiac)]
+    print(f"{lbl:16} → {t}")
     
 print("\nSolunar Periods (local time):")
-print(f"Sunrise       → {fmt(sr_local_dt)}")
-print(f"Noon          → {fmt(strans_local)}")
-print(f"Sunset        → {fmt(ss_local_dt)}")
-print(f"Sun Underfoot → {fmt(sund_local)}")
-print(f"Moonrise      → {fmt(mr_local)}")
-print(f"Moonset       → {fmt(ms_local)}")
-print(f"Moon Overhead → {fmt(mtrans_local)}")
-print(f"Moon Underfoot→ {fmt(mund_local)}")
+print(f"Sunrise        → {fmt(sr_local_dt)}")
+print(f"Noon           → {fmt(strans_local)}")
+print(f"Sunset         → {fmt(ss_local_dt)}")
+print(f"Sun Underfoot  → {fmt(sund_local)}")
+print(f"Moonrise       → {fmt(mr_local)}")
+print(f"Moonset        → {fmt(ms_local)}")
+print(f"Moon Overhead  → {fmt(mtrans_local)}")
+print(f"Moon Underfoot → {fmt(mund_local)}")
 
 
 # Build zodiac segment datetimes (local) around reference date so windows crossing midnight are covered
 if merged:
     ref_date = merged[0][0].date()
 else:
-    ref_date = (datetime.utcnow() + datetime.timedelta(hours=timezone)).date()
+    # fallback: use current UTC date (module-level datetime) adjusted by timezone
+    ref_date = (datetime.datetime.utcnow() + datetime.timedelta(hours=timezone)).date()
 
 segment_points = []
 for day_offset in (-1, 0, 1):
@@ -230,11 +245,11 @@ for day_offset in (-1, 0, 1):
                 hour24 = 0 if suffix == 'AM' else 12
             else:
                 hour24 = hh if suffix == 'AM' else hh + 12
-            segment_points.append((datetime.datetime(day.year, day.month, day.day, hour24, mm), zodiac[i]))
+            segment_points.append((datetime.datetime(day.year, day.month, day.day, hour24, mm), zodiac[i % len(zodiac)]))
         else:
             # fallback for legacy "HH:MM" format
             hh, mm = map(int, tstr.split(':'))
-            segment_points.append((datetime.datetime(day.year, day.month, day.day, hh, mm), zodiac[i]))
+            segment_points.append((datetime.datetime(day.year, day.month, day.day, hh, mm), zodiac[i % len(zodiac)]))
 
 # sort and build consecutive segments (start, end, label)
 segment_points.sort(key=lambda x: x[0])
@@ -244,8 +259,8 @@ for i in range(len(segment_points) - 1):
     s_end, _ = segment_points[i + 1]
     segments_zodiac.append((s_start, s_end, label))
 
-print("\nSuggested Best Fishing Windows (with Zodiac Time segments):")
-print(f"{'Start Time':<20} {'End Time':<10} {'Events':<42} {'Zodiac':<30}")
+print("\nSuggested Best Fishing Windows (fish for Zodiac):")
+print(f"{'Start Time':<20} {'End Time':<10} {'Events':<42} {'Fish':<30}")
 print("-" * 105)
 
 for wstart, wend in merged:
