@@ -2,7 +2,66 @@ import ephem
 import math
 import time
 import datetime
-from location_config import Latitude, Longitude, timezone, day_offset
+"""
+Put your location-specific configuration here. The main script expects the following names:
+
+- Latitude: decimal degrees (positive north)
+- Longitude: decimal degrees (positive east)
+- timezone: numeric offset from UTC in hours (used as a fallback)
+- day_offset: integer number of days to shift the report (0 for today)
+- TZ_NAME: optional IANA timezone name (e.g. "America/Chicago"). When provided, the
+  main script will compute a DST-aware UTC offset automatically.
+
+Edit the values below for your location. If you set TZ_NAME, the script will prefer it and
+compute the correct offset (including DST). If TZ_NAME is None the script will fall back to
+the numeric `timezone` value (or compute system local offset if available).
+"""
+
+# Example placeholders — replace with your actual location.
+# Latitude = 41.8781    # example: Chicago latitude
+# Longitude = -87.6298  # example: Chicago longitude
+Latitude = 36.6277
+Longitude = -119.6766
+
+# Numeric timezone offset (hours) — kept for backward compatibility / fallback.
+# Example: -6 for CST (standard time). The main script will override this with a
+# DST-aware offset if TZ_NAME or system timezone is available.
+timezone = -7
+
+# day_offset: 0 for today, +1 for tomorrow, -1 for yesterday
+day_offset = 0
+
+# Optional IANA timezone name. If you set this to a string like "America/Chicago",
+# the main script will compute the correct UTC offset (including DST) automatically.
+# Set to None if you don't want to provide an IANA name.
+TZ_NAME = "America/Los_Angeles"
+
+# Ensure `timezone` reflects the correct current UTC offset (hours), including DST.
+# If the optional TZ_NAME is provided in location_config (IANA name like "America/Chicago"),
+# use that to compute the proper offset; otherwise fall back to the system local offset.
+
+try:
+    # try to read an optional TZ_NAME from location_config
+    from location_config import TZ_NAME
+except Exception:
+    TZ_NAME = None
+
+try:
+    if TZ_NAME:
+        # Use IANA timezone to compute correct offset including DST
+        try:
+            from zoneinfo import ZoneInfo
+            tz_obj = ZoneInfo(TZ_NAME)
+            timezone = datetime.datetime.now(tz_obj).utcoffset().total_seconds() / 3600
+        except Exception:
+            # zoneinfo may not be available or TZ_NAME may be invalid; fall back to system offset
+            timezone = datetime.datetime.now().astimezone().utcoffset().total_seconds() / 3600
+    else:
+        # No TZ_NAME provided: use the system local timezone offset (may reflect DST)
+        timezone = datetime.datetime.now().astimezone().utcoffset().total_seconds() / 3600
+except Exception:
+    # If anything goes wrong, keep the timezone value imported from location_config
+    pass
 
 def hrmn(time):
     # return 12-hour time with AM/PM suffix (e.g. "01:05PM")
@@ -18,6 +77,7 @@ def hrmn(time):
     hour12 = hour % 12 or 12
     return "{:02d}:{:02d}{}".format(hour12, minute, ampm)
 
+# after this used ephem for moon stuff...
 def sunlight(Latitude, Longitude, timesec):
     # small performance: cache math helpers locally
     rad = math.radians
@@ -224,16 +284,24 @@ print(f"Moon Overhead  → {fmt(mtrans_local)}")
 print(f"Moon Underfoot → {fmt(mund_local)}")
 
 
-# Build zodiac segment datetimes (local) around reference date so windows crossing midnight are covered
+# Build zodiac segment datetimes (local) covering the date range spanned by
+# the merged windows (plus one day on each side) so windows that fall on adjacent
+# dates (e.g. Sun Underfoot at 00:12 next day) are included.
 if merged:
-    ref_date = merged[0][0].date()
+    # compute earliest and latest dates from merged windows
+    min_date = min(w[0].date() for w in merged)
+    max_date = max(w[1].date() for w in merged)
+    start_day = min_date - datetime.timedelta(days=1)
+    end_day = max_date + datetime.timedelta(days=1)
 else:
     # fallback: use current UTC date (module-level datetime) adjusted by timezone
-    ref_date = (datetime.datetime.utcnow() + datetime.timedelta(hours=timezone)).date()
+    center = (datetime.datetime.utcnow() + datetime.timedelta(hours=timezone)).date()
+    start_day = center - datetime.timedelta(days=1)
+    end_day = center + datetime.timedelta(days=1)
 
 segment_points = []
-for day_offset in (-1, 0, 1):
-    day = ref_date + datetime.timedelta(days=day_offset)
+day = start_day
+while day <= end_day:
     for i, tstr in enumerate(times):
         # handle AM/PM produced by hrmn()
         suffix = tstr[-2:].upper() if len(tstr) > 2 else None
@@ -250,6 +318,7 @@ for day_offset in (-1, 0, 1):
             # fallback for legacy "HH:MM" format
             hh, mm = map(int, tstr.split(':'))
             segment_points.append((datetime.datetime(day.year, day.month, day.day, hh, mm), zodiac[i % len(zodiac)]))
+    day += datetime.timedelta(days=1)
 
 # sort and build consecutive segments (start, end, label)
 segment_points.sort(key=lambda x: x[0])
@@ -272,7 +341,10 @@ for wstart, wend in merged:
     # Find overlapping zodiac segments
     zodiac_labels = []
     for s_start, s_end, label in segments_zodiac:
-        if s_start < wend and s_end > wstart:
+        # Use inclusive overlap test so segments that exactly touch a window
+        # boundary are considered overlapping. Strict (<, >) could miss
+        # cases where s_end == wstart or s_start == wend and produce "None".
+        if s_start <= wend and s_end >= wstart:
             if not zodiac_labels or zodiac_labels[-1] != label:
                 zodiac_labels.append(label)
     label_str = ", ".join(zodiac_labels) if zodiac_labels else "None"
