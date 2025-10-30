@@ -11,9 +11,9 @@ This script is refactored so it can be imported without side-effects. Run
 as a script to print the suggested fishing windows for the configured date.
 """
 # ----------------------- User configuration -----------------------
-Latitude = 40.0491
-Longitude = -75.026
-timezone = -4  # numeric offset from UTC in hours
+Latitude = 36.987
+Longitude = -119.700
+timezone = -7  # numeric offset from UTC in hours
 day_offset = 0
 
 # define major/minor window sizes (hours)
